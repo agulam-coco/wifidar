@@ -1,0 +1,31 @@
+# ---------------------------------------------------------------
+# Files git should never track for this project.
+# Rule of thumb: ignore anything generated or downloaded,
+# since anyone can recreate it from the source code.
+# ---------------------------------------------------------------
+
+# --- Python (bridge/) ---
+# Virtual environment: installed libraries, recreated with pip
+.venv/
+# Compiled bytecode, regenerated automatically
+__pycache__/
+*.pyc
+
+# --- Node / Foxglove extension (extension/) ---
+# Installed npm packages, recreated with `npm install`
+node_modules/
+# Build output, recreated with `npm run build`
+dist/
+# Packaged extension; attach to GitHub releases instead
+*.foxe
+
+# --- Recordings ---
+# Recordings can get big, so ignore them all...
+*.mcap
+# ...except the one sample we ship on purpose
+!recordings/demo_walk.mcap
+
+# --- OS / editor clutter ---
+.DS_Store
+.vscode/
+.idea/
