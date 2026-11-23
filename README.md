@@ -13,4 +13,4 @@ Wi-Fi as a robot sensor, with Foxglove as two-way mission control.
 | `extension/` | Signal Hunter, a custom Foxglove panel (TypeScript, React) |
 | `foxglove/` | Exported Foxglove layout |
 | `recordings/` | Sample MCAP recording |
-| `docs/` | Images used in this README |
+| `docs/` | Devlog, write-up, and images |
