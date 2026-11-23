@@ -1,0 +1,7 @@
+# Python dependencies for the wifidar bridge.
+# Install with: pip install -r requirements.txt
+
+# Foxglove SDK: streams data to the Foxglove app and writes MCAP recordings
+foxglove-sdk>=0.31
+# Reads and writes the ESP32's USB serial port
+pyserial>=3.5
