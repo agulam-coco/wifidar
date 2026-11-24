@@ -4,9 +4,11 @@ Reads JSON lines from the ESP32 (or a fake one), hides other people's
 network details, and publishes the data as Foxglove topics.
 
 Topics published:
-    /wifi/scan      JSON   every network from the latest scan, strongest first
-    /wifi/tracked   JSON   live strength of the network being hunted
-    /log            Log    human-readable events for Foxglove's Log panel
+    /wifi/scan      JSON            every network from the latest scan, strongest first
+    /wifi/radar     SceneUpdate     3D radar of the latest scan
+    /tf             FrameTransform  places frame "base" (you) in "world"
+    /wifi/tracked   JSON            live strength of the network being hunted
+    /log            Log             human-readable events for Foxglove's Log panel
 
 Usage:
     python bridge.py --fake
@@ -22,6 +24,7 @@ from foxglove.messages import Log, LogLevel
 from foxglove.websocket import ServerListener
 
 import config
+import scene
 from fake_esp32 import FakeESP32
 
 # ---------- Privacy helpers ----------
@@ -87,6 +90,10 @@ def handle_scan(message: dict) -> None:
         "strongest_rssi": networks[0]["rssi"] if networks else None,
         "networks": networks,
     })
+    
+    # Draw the radar. The transform tells the 3D panel where "base" is.
+    foxglove.log("/tf", scene.base_transform())
+    foxglove.log("/wifi/radar", scene.build_scene(networks))
 
 
 def handle_track(message: dict) -> None:
