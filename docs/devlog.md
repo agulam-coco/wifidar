@@ -146,6 +146,58 @@ Also switched to logging just the recording's file name instead of the full path
 
 ---
 
+## Step 7: ESP32 screen twin
+
+Added `/esp32/screen`, an image of what the ESP32's screen is showing at
+each moment. My first idea was to send the real display buffer, but at
+115200 baud that's about 10 seconds per frame. Everything the screen
+shows (mode, network count, dBm, label) is data the bridge already has,
+so the bridge redraws the screen itself in Python. That's a digital twin:
+a software copy kept in sync with the real thing, with zero extra serial
+traffic. It works with the fake ESP32 too.
+
+![Fake cam, screen twin, and radar side by side](images/step7-screen-twin.png)
+
+`screen.py` mirrors the firmware's two screens:
+
+| Scan mode | Track mode |
+|---|---|
+| ![Scan screen](images/step7-scan-preview.png) | ![Finder screen](images/step7-finder-preview.png) |
+
+The scan screen shows radar rings and how many networks are around. The
+finder screen has a ring that fills up and goes from red to green as I
+get closer to the network I'm hunting. The rule for a digital twin is that
+it has to change whenever the real thing changes, so the file says that
+right at the top.
+
+**Smooth edges.** Pillow draws jagged circles, so I draw everything at
+3x size and shrink it down. Shrinking blends the jagged pixels into
+smooth edges. This is called supersampling.
+
+**Angles.** The firmware's arc angles start at the bottom of the circle,
+but Pillow's start on the right. Both go clockwise, so converting is just
+adding 90 degrees.
+
+**PNG, not JPEG.** JPEG is great for camera photos, but it makes sharp
+text and flat colors blotchy. The screen is all text and flat colors, so
+PNG keeps it crisp, and each frame is only about 17 to 21 KB.
+
+**Labels.** Tracking messages from the ESP32 only carry a BSSID, not a
+name. The bridge already sees names during scans, so it keeps a lookup
+table from ID to label. That's how the finder screen knows to say
+"YourWifiName" instead of a hash. `/wifi/tracked` now includes the label
+too, for the Signal Hunter panel.
+
+**Testing it alone.** Running `python screen.py` by itself saves sample
+images of both screens, so I can tweak the look without starting the
+whole bridge. The finder screen can't show up live until the Track
+button exists, so that's where the preview above came from.
+
+Now a replay shows the radar, the camera, the plots, and what the ESP32's
+screen was showing, all on the same timeline.
+
+---
+
 ## Design note: adding a camera
 
 ![Logitech C920 webcam](images/webcam-c920.jpg)
