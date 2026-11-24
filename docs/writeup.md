@@ -31,7 +31,7 @@ I don't have a lidar. But I do have an ESP32 with a screen, and every ESP32 has 
 
 So: **what if Wi-Fi was the sensor?**
 
-Carry the ESP32 around, scan the networks, and Foxglove draws a live 3D radar of the Wi-Fi around you, the same way it would draw a robot's lidar. Each network is a bar. Stronger signals are taller, greener, and closer to you.
+Carry the ESP32 around, scan the networks, and Foxglove draws a live 3D radar of the Wi-Fi around you, the same way it would draw a robot's lidar.
 
 Then the part I was most excited about: making it **two-way**. Most hobby projects only send data into a dashboard. Real robot tools also send commands back out. So I'm building a custom panel called **Signal Hunter**: click a network, Foxglove sends a command back down to the ESP32, and its screen turns into a hot/cold finder that fills up as you walk toward that router.
 
@@ -55,25 +55,49 @@ So the bridge hashes every network's hardware address into a short anonymous ID 
 
 At one point Foxglove's Log panel was just empty. The bridge sends a "connected" message the second it starts, which was before Foxglove had connected. Live viewers only get messages sent *after* they start listening, so that message was gone.
 
-The fix was a listener that notices when someone starts watching the log and resends the latest status. Small bug, but it made the difference between live streaming and recording click for me.
+The fix was a listener that notices when someone starts watching the log and resends recent events. Small bug, but it made the difference between live streaming and recording click for me.
 
-## Adding a camera (planned)
+## The radar
+
+![The 3D radar](images/step4-radar.png)
+
+Each scan turns into a 3D radar in Foxglove. I'm the blue sphere in the middle, and each network is a bar around me:
+
+- the **slice** of the circle it sits in is its Wi-Fi channel, so you can see which channels are crowded
+- **closer** means a stronger signal
+- **taller and greener** also means stronger, while short and red means weak
+
+Getting there meant learning how robots describe space. Every shape lives in a coordinate frame, and a transform says how frames relate. Mine are just "the room" and "me" for now, but the same idea scales up to a robot with dozens of sensors.
+
+## Recording everything
+
+The bridge also records every session to an MCAP file, Foxglove's format for robot recordings. Open the file later and you get a timeline: drag it and every panel jumps to the same moment.
+
+Along the way I found my log messages all claimed to be from **December 31, 1969**. Turns out an empty timestamp counts as zero, and zero in computer time is midnight on January 1, 1970 in UTC, which is 6 PM the night before in Central time.
+
+## Adding a camera
+
+![My Logitech C920](images/webcam-c920-lit.jpg)
 
 This idea came from just looking around my desk. I had a Logitech webcam sitting there, and I started thinking about how real robots are set up. They don't only log numbers. They put cameras right next to the sensors, so when something weird shows up in the data, you can see what was actually happening.
 
-Foxglove already lines up every topic by time. So if I add a camera, scrubbing through a recording would show the radar, the graphs, and what the camera saw, all from the same moment. Like seeing exactly where I was standing when a signal spiked.
-
-Then I wanted one more view: **what the ESP32's screen was showing** at that same moment.
+Foxglove already lines up every topic by time. So with a camera, scrubbing through a recording shows the radar, the graphs, and what the camera saw, all from the same moment. Like seeing exactly where I was standing when a signal spiked.
 
 ### Faking the camera
 
-I wanted to test the camera the same way I tested the ESP32: with a fake first. My idea was a fixed, standard test image at a set size, where only a few things change each frame, like a counter, a timestamp, and a dot moving slowly in a circle.
+I wanted to test the camera the same way I tested the ESP32: with a fake first. My idea was a fixed, standard test image at a set size, where only a few things change each frame: a counter, a timestamp, and a dot moving slowly in a circle.
+
+![The fake camera next to the radar](images/step6-fake-cam.png)
 
 Because it's predictable, frame 120 always looks the same. If frames drop or lag, I'd see it right away instead of guessing. It's a way to test what a real camera setup would be like before the real camera is involved.
 
+Then I switched to the real webcam with one flag. The first thing I did was point it at my own laptop with Foxglove open, so the camera feed shows Foxglove showing the camera feed, forever.
+
+![The real webcam feed](images/step6-webcam.png)
+
 ### Doing the math on the screen
 
-My first plan for the screen was to send the actual display buffer from the ESP32. Then I did the numbers:
+Next I want one more view: **what the ESP32's screen was showing** at each moment. My first plan was to send the actual display buffer from the ESP32. Then I did the numbers:
 
 - the screen is 240 x 240 pixels at 2 bytes each, so about **115 KB per frame**
 - the serial connection moves about **11.5 KB per second**
@@ -85,11 +109,9 @@ Instead, the bridge can build a **digital twin** of the screen. Everything the s
 
 ## What's next
 
-- the 3D radar view
-- recording everything to a file so whole walks can be replayed
-- the fake webcam, then the real one
 - the screen twin
 - the Signal Hunter panel and two-way commands
 - firmware on the real ESP32
+- a real walk around the building, recorded and replayable
 
 I'll keep updating this as I go.

@@ -60,13 +60,93 @@ That reads as: go into `networks`, look at every item, keep the ones where `mine
 
 **Bug: the Log panel was empty.** The bridge sends a hello message right when it starts, which is *before* Foxglove connects. Live viewers only get messages sent after they subscribe, so the hello was already gone.
 
-**Fix:** a listener that notices when a Foxglove app subscribes to `/log` and resends the latest status. The SDK calls the listener on its own thread, so the listener only flips a flag (`threading.Event`) and the main loop does the actual logging. That keeps all the work on one thread.
+**Fix:** a listener that notices when a Foxglove app subscribes to `/log` and resends the latest status. The SDK calls the listener on its own thread, so the listener only flips a flag (`threading.Event`) and the main loop does the actual logging.
 
 **Learned:** live streaming and recording are different. Live viewers miss anything sent before they show up. A recording won't have that problem.
 
 ---
 
-## Design note: adding a camera (planned)
+## Step 4: 3D radar
+
+Each scan now turns into a 3D radar in Foxglove's 3D panel. I'm a blue sphere in the middle, and each network is a bar around me:
+
+- **which slice** of the circle = its Wi-Fi channel (1 to 13), so I can see which channels are crowded
+- **distance from me** = signal strength, strong is close
+- **height and color** = signal strength again, tall and green is strong, short and red is weak
+
+Faint rings mark -50, -70 and -90 dBm.
+
+![3D radar](images/step4-radar.png)
+
+All the 3D math lives in its own file, `scene.py`, so the bridge just calls `build_scene()` and publishes the result as a `SceneUpdate`. Each network's bar has the same ID every scan, so Foxglove replaces it instead of stacking a new one. Bars also have a lifetime, so if a network stops showing up, its bar disappears on its own.
+
+Placing things on a circle is just `x = distance * cos(angle)` and `y = distance * sin(angle)`. Each network's spot inside its slice comes from a hash of its ID, so it stays in the same place between scans instead of jumping around.
+
+Had to learn coordinate frames for this. Every shape says which frame it lives in. Mine are `world` (the room) and `base` (me), plus a transform saying where `base` sits in `world`. Right now it's fixed at the center, but later the transform could actually rotate when I turn the board.
+
+![Full layout with radar, log, plot, and raw messages](images/step4-layout.png)
+
+---
+
+## Step 5: Recording + replay
+
+The bridge now records every session to an MCAP file in `recordings/`, named with the date and time so nothing gets overwritten. Once the file is open, every `foxglove.log()` call goes live to Foxglove *and* into the file, so I didn't have to change any of my logging code.
+
+Opening the file in Foxglove gives me a timeline. Dragging the scrubber moves the radar, the plot, and the raw messages to the same moment together. That's the part that makes the webcam idea work.
+
+**Bug: logs from 1969.** The Log panel was showing every message at Dec 31, 1969, 6:00 PM. Foxglove's Log message has its own timestamp field and I never set it, so it defaulted to 0. Time 0 is the Unix epoch, midnight Jan 1, 1970 UTC, which is 6 PM Dec 31 in Central time. Fixed it by setting `timestamp=Timestamp.now()`.
+
+**Bug: the bridge closed right away.** When I rewrote `main()`, the last two lines of the file got cut off:
+
+```python
+if __name__ == "__main__":
+    main()
+```
+
+So Python defined `main()` but never called it, and the program just ended. Easy fix, but it taught me what that block actually does.
+
+**Learned:** the MCAP index gets written when the file closes. If the program gets killed without closing it, the file can come out broken. That's why the close is in `finally`, and why I always stop with Ctrl+C.
+
+<!-- TODO: add a screenshot of a replay with the timeline visible -->
+<!-- ![Replay with timeline](images/step5-replay.png) -->
+
+---
+
+## Step 6: Camera
+
+Added a camera topic, `/camera/webcam`, so recordings show what the camera saw at every moment next to the radar. Same pattern as the ESP32: a fake source and a real one with the same `read()` and `close()` methods, so the rest of the code can't tell them apart.
+
+**Fake webcam.** This was the idea I wanted to test: a fixed standard image where only a few things change each frame. The grid, color bars, and circle get drawn once. Every frame just copies that and adds a dot moving around the circle, a frame counter, and a time label.
+
+Everything is based on the frame number, not the clock, so frame 120 always looks exactly the same. When I step through a replay, the counter should go up by about 6 each time (30 camera frames per second, 5 published). If it jumps more than that, frames got dropped.
+
+![Fake webcam next to the radar](images/step6-fake-cam.png)
+
+**Real camera.** Swapping to my Logitech C920 is one flag: `--camera webcam`. macOS asked for camera permission the first time. I pointed it at my laptop while Foxglove was open, so the feed shows Foxglove showing the feed, over and over.
+
+![C920 feed next to the radar](images/step6-webcam.png)
+
+![Logitech C920](images/webcam-c920-lit.jpg)
+
+**Threads.** The main loop spends most of its time waiting on the ESP32, so the camera runs on its own thread. It reads every frame from the camera but only publishes 5 per second. Reading frames I throw away sounds wasteful, but webcams buffer frames, and if you read slower than the camera produces, you get old frames and the video lags behind.
+
+Also learned not to name a thread attribute `_stop`, because `threading.Thread` already has an internal method with that name. Overwriting it breaks `join()`.
+
+**JPEG.** A raw 640x480 frame is about 920 KB. As a JPEG it's around 20 to 60 KB. At 5 frames a second, that keeps recordings small enough to actually share.
+
+**Shutdown order.** The camera thread stops *before* the recording closes. Otherwise it could try to write a frame into a file that's already closed.
+
+**Bug: missing startup logs.** Only one startup line showed up in the Log panel. My Step 3 fix only remembered the *latest* status, so "Camera started" got replaced by "ESP32 connected" before Foxglove connected. Some startup lines were also plain `print()` calls that never went to Foxglove at all.
+
+Fixed it with a `deque` that keeps the last 20 events. When a viewer subscribes to `/log`, the bridge resends all of them with their original timestamps. Resent copies are labeled `wifidar (resent)` because they also end up in the recording. I tested whether the SDK could send a message to just one viewer and skip the recording, and it couldn't, so labeling them was the honest option.
+
+![Resent startup logs](images/step6-resent-logs.png)
+
+Also switched to logging just the recording's file name instead of the full path, so my home folder doesn't end up in recordings I share.
+
+---
+
+## Design note: adding a camera
 
 ![Logitech C920 webcam](images/webcam-c920.jpg)
 
@@ -74,14 +154,12 @@ While testing Step 3, I had a Logitech C920 webcam sitting next to me and starte
 
 Foxglove already lines up every topic by timestamp, so if I add a camera topic, scrubbing through a recording would show the radar, the plots, and the camera frame all from the same instant. No extra syncing on my end.
 
-Planned topics:
-
 | Topic | What it is |
 |---|---|
-| `/camera/webcam` | frames from the C920, compressed to JPEG |
-| `/esp32/screen` | an image of what the ESP32's screen was showing |
+| `/camera/webcam` | frames from the C920, compressed to JPEG (built in Step 6) |
+| `/esp32/screen` | an image of what the ESP32's screen was showing (Step 7) |
 
-**Fake webcam.** Same idea as the fake ESP32: a `FakeWebcam` with the same interface as the real camera, so I can test the whole pipeline without the camera plugged in. My plan for the fake feed is a fixed standard image at a set size where only a few things change each frame: a frame counter, a timestamp, and a dot moving in a circle. Since it's deterministic, frame 120 always looks the same, so if something's off (dropped frames, lag, wrong timing) I'll see it right away. It lets me test what a real camera setup would be like before the real camera is involved.
+**Fake webcam.** Same idea as the fake ESP32: a `FakeWebcam` with the same interface as the real camera, so I can test the whole pipeline without the camera plugged in. The fake feed is a fixed standard image at a set size where only a few things change each frame. Since it's deterministic, if something's off (dropped frames, lag, wrong timing) I'll see it right away. It lets me test what a real camera setup would be like before the real camera is involved.
 
 **The ESP32 screen.** My first idea was to send the actual display buffer from the ESP32. Then I did the math:
 
@@ -93,7 +171,7 @@ Way too slow. And the display library draws straight to the screen without keepi
 
 Better plan: a **digital twin**. Everything the screen shows (mode, network count, dBm, percent, label) is data the bridge already has. So the bridge can redraw the same screen in Python and publish it. No extra serial traffic, it works with the fake ESP32, and it always matches the real screen. Streaming the real framebuffer could be a stretch goal later.
 
-**Privacy again:** if I record walks with the webcam, I'll catch other people. I'll keep the camera pointed at my hand and the ESP32, or blur faces, before anything goes in the repo.
+**Privacy:** if I record walks with the webcam, I'll catch other people. I'll keep the camera pointed at my hand and the ESP32, or blur faces, before anything goes in the repo.
 
 ---
 
@@ -104,10 +182,10 @@ Better plan: a **digital twin**. Everything the screen shows (mode, network coun
 | 1 | Repo setup | done |
 | 2 | Bridge skeleton + fake ESP32 | done |
 | 3 | Streaming to Foxglove | done |
-| 4 | 3D radar | next |
-| 5 | Recording + replay (MCAP) | |
-| 6 | Camera: fake webcam, then the real C920 | |
-| 7 | ESP32 screen twin | |
+| 4 | 3D radar | done |
+| 5 | Recording + replay (MCAP) | done |
+| 6 | Camera: fake webcam, then the real C920 | done |
+| 7 | ESP32 screen twin | next |
 | 8 | Signal Hunter panel | |
 | 9 | Two-way commands | |
 | 10 | Firmware on the real ESP32 | |
