@@ -9,6 +9,7 @@ Topics published:
     /tf             FrameTransform  places frame "base" (you) in "world"
     /wifi/tracked   JSON            live strength of the network being hunted
     /camera/webcam  CompressedImage camera frames, real or fake
+    /esp32/screen   CompressedImage what the ESP32's screen is showing (digital twin)
     /log            Log             human-readable events for Foxglove's Log panel
 
 Usage:
@@ -28,17 +29,25 @@ from datetime import datetime
 from pathlib import Path
 
 import foxglove
-from foxglove.messages import Log, LogLevel, Timestamp
+from foxglove.messages import CompressedImage, Log, LogLevel, Timestamp
 from foxglove.websocket import ServerListener
 
 import camera
 import config
 import scene
+import screen
 from fake_esp32 import FakeESP32
 
 # Recordings go in <repo>/recordings, no matter where the bridge is run from.
 # __file__ is this script's path; .parent is bridge/, .parent.parent is the repo root.
 RECORDINGS_DIR = Path(__file__).resolve().parent.parent / "recordings"
+
+# Draws the ESP32 screen twin. Created once and reused, since it loads fonts.
+screen_twin = screen.ScreenTwin()
+
+# Private ID -> display label, from the latest scans. Tracking messages only
+# carry a BSSID, so this is how the finder screen knows what name to show.
+network_labels: dict[str, str] = {}
 
 
 # ---------- Privacy helpers ----------
@@ -113,7 +122,17 @@ class BridgeListener(ServerListener):
         if channel.topic == "/log":
             self.resend_events.set()
 
+# ---------- Screen twin ----------
 
+def publish_screen(png: bytes) -> None:
+    """Publish a drawing of the ESP32's screen on /esp32/screen."""
+    foxglove.log(config.SCREEN_TOPIC, CompressedImage(
+        timestamp=Timestamp.now(),
+        frame_id="esp32_screen",
+        data=png,
+        format="png",
+    ))
+    
 # ---------- Message handlers ----------
 
 def handle_scan(message: dict) -> None:
@@ -121,9 +140,11 @@ def handle_scan(message: dict) -> None:
     networks = []
     for net in message["networks"]:
         net_id = private_id(net["bssid"])
+        label = display_label(net["ssid"], net_id)
+        network_labels[net_id] = label
         networks.append({
             "id": net_id,
-            "label": display_label(net["ssid"], net_id),
+            "label": label,
             "rssi": net["rssi"],
             "ch": net["ch"],
             "open": net["open"],
@@ -140,17 +161,32 @@ def handle_scan(message: dict) -> None:
     # Draw the radar. The transform tells the 3D panel where "base" is.
     foxglove.log("/tf", scene.base_transform())
     foxglove.log("/wifi/radar", scene.build_scene(networks))
+    
+    # The real screen shows the network count in scan mode
+    publish_screen(screen_twin.scan_screen(network_count=len(networks)))
 
 
 def handle_track(message: dict) -> None:
     """Publish a tracking update on /wifi/tracked, with the BSSID anonymized."""
+    net_id = private_id(message["bssid"])
+    label = network_labels.get(net_id, net_id)  # fall back to the ID if never scanned
+
     foxglove.log("/wifi/tracked", {
-        "id": private_id(message["bssid"]),
+        "id": net_id,
+        "label": label,
         "rssi": message["rssi"],
         "raw_rssi": message["raw_rssi"],
         "percent": message["percent"],
         "found": message["found"],
     })
+
+    # The real screen shows the finder ring in track mode
+    publish_screen(screen_twin.finder_screen(
+        rssi=message["rssi"],
+        percent=message["percent"],
+        label=label,
+        found=message["found"],
+    ))
 
 
 def handle_line(raw: bytes) -> None:

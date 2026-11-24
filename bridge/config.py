@@ -45,3 +45,6 @@ CAMERA_HEIGHT = 480
 CAMERA_PUBLISH_FPS = 5
 # JPEG quality from 1 (tiny, blocky) to 95 (big, sharp). 70 is a good balance.
 CAMERA_JPEG_QUALITY = 70
+
+# --- ESP32 screen twin ---
+SCREEN_TOPIC = "/esp32/screen"
