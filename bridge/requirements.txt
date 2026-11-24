@@ -5,3 +5,8 @@
 foxglove-sdk>=0.31
 # Reads and writes the ESP32's USB serial port
 pyserial>=3.5
+
+# Draws the fake webcam's test pattern and encodes it as JPEG
+pillow>=11.0
+# Reads frames from a real USB webcam
+opencv-python>=4.10

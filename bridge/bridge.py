@@ -8,18 +8,22 @@ Topics published:
     /wifi/radar     SceneUpdate     3D radar of the latest scan
     /tf             FrameTransform  places frame "base" (you) in "world"
     /wifi/tracked   JSON            live strength of the network being hunted
+    /camera/webcam  CompressedImage camera frames, real or fake
     /log            Log             human-readable events for Foxglove's Log panel
 
 Usage:
     python bridge.py --fake                      record to recordings/<timestamp>.mcap
     python bridge.py --fake --no-record          live only
     python bridge.py --fake --record walk.mcap   record to a specific file
+    python bridge.py --fake --camera fake        add the fake webcam
+    python bridge.py --fake --camera webcam      add a real webcam
 """
 
 import argparse
 import hashlib
 import json
 import threading
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 
@@ -27,6 +31,7 @@ import foxglove
 from foxglove.messages import Log, LogLevel, Timestamp
 from foxglove.websocket import ServerListener
 
+import camera
 import config
 import scene
 from fake_esp32 import FakeESP32
@@ -34,6 +39,7 @@ from fake_esp32 import FakeESP32
 # Recordings go in <repo>/recordings, no matter where the bridge is run from.
 # __file__ is this script's path; .parent is bridge/, .parent.parent is the repo root.
 RECORDINGS_DIR = Path(__file__).resolve().parent.parent / "recordings"
+
 
 # ---------- Privacy helpers ----------
 
@@ -47,8 +53,8 @@ def display_label(ssid: str, net_id: str) -> str:
     """Show the real name only for our own networks."""
     return ssid if ssid in config.MY_NETWORKS else net_id
 
-# ---------- Recording ----------
 
+# ---------- Recording ----------
 
 def default_recording_path() -> Path:
     """A new timestamped file, e.g. recordings/wifidar_2026-11-23_22-15-04.mcap."""
@@ -57,37 +63,56 @@ def default_recording_path() -> Path:
 
 
 # ---------- Logging ----------
-# The most recent status line, resent to viewers who connect late
-last_status = "Bridge started"
+
+# How many recent events to resend to a viewer who connects late
+RESEND_LIMIT = 20
+
+# Recent events as (timestamp, level, text). Oldest drops off automatically.
+recent_events: deque[tuple[Timestamp, LogLevel, str]] = deque(maxlen=RESEND_LIMIT)
+
+
+def publish_log(timestamp: Timestamp, level: LogLevel, text: str, name: str = "wifidar") -> None:
+    """Send one line to Foxglove's Log panel."""
+    foxglove.log("/log", Log(timestamp=timestamp, level=level, message=text, name=name))
+
 
 def log_event(text: str, level: LogLevel = LogLevel.Info) -> None:
-    """Print to the terminal, send to Foxglove's Log panel, and remember it."""
-    global last_status
-    last_status = text
+    """Print to the terminal, send to Foxglove, and remember it for late viewers."""
+    timestamp = Timestamp.now()
     print(text)
-    foxglove.log("/log", Log(
-        timestamp=Timestamp.now(),
-        level=level,
-        message=text,
-        name="wifidar",
-    ))
+    recent_events.append((timestamp, level, text))
+    publish_log(timestamp, level, text)
+
+
+def resend_recent_events() -> None:
+    """Replay recent events for a viewer who just started watching /log.
+
+    Live viewers only get messages sent after they subscribe, so this
+    catches them up on startup events. Resent copies keep their original
+    timestamps, are labeled 'wifidar (resent)', and aren't printed again.
+    They also land in the recording, which is why they're labeled.
+    """
+    for timestamp, level, text in list(recent_events):
+        publish_log(timestamp, level, text, name="wifidar (resent)")
+
 
 class BridgeListener(ServerListener):
     """Reacts to events from connected Foxglove apps.
 
     The SDK calls these methods on its own thread, so they only set a flag.
-    The main loop does the actual work, which keeps all logging on one thread.
+    The main loop does the actual work.
     """
 
     def __init__(self) -> None:
         super().__init__()
-        self.resend_status = threading.Event()
+        self.resend_events = threading.Event()
 
     def on_subscribe(self, client, channel) -> None:
         # Live viewers only get messages sent after they subscribe,
-        # so when someone starts watching /log, replay the latest status.
+        # so when someone starts watching /log, replay recent events.
         if channel.topic == "/log":
-            self.resend_status.set()
+            self.resend_events.set()
+
 
 # ---------- Message handlers ----------
 
@@ -111,7 +136,7 @@ def handle_scan(message: dict) -> None:
         "strongest_rssi": networks[0]["rssi"] if networks else None,
         "networks": networks,
     })
-    
+
     # Draw the radar. The transform tells the 3D panel where "base" is.
     foxglove.log("/tf", scene.base_transform())
     foxglove.log("/wifi/radar", scene.build_scene(networks))
@@ -152,8 +177,14 @@ def handle_line(raw: bytes) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="wifidar bridge")
     parser.add_argument("--fake", action="store_true", help="use a simulated ESP32")
-    parser.add_argument("--record", type=Path, help="MCAP file to write (default: timestamped file in recordings/)")
-    parser.add_argument("--no-record", action="store_true", help="stream live only, don't save a recording")
+    parser.add_argument("--record", type=Path,
+                        help="MCAP file to write (default: timestamped file in recordings/)")
+    parser.add_argument("--no-record", action="store_true",
+                        help="stream live only, don't save a recording")
+    parser.add_argument("--camera", choices=["none", "fake", "webcam"], default="none",
+                        help="camera source to publish on /camera/webcam")
+    parser.add_argument("--camera-index", type=int, default=0,
+                        help="which webcam to open (0 is usually the built-in one)")
     args = parser.parse_args()
 
     if not args.fake:
@@ -170,24 +201,36 @@ def main() -> None:
         record_path = args.record or default_recording_path()
         record_path.parent.mkdir(parents=True, exist_ok=True)
         recording = foxglove.open_mcap(str(record_path), allow_overwrite=True)
-        print(f"Recording to {record_path}")
+        log_event(f"Recording to {record_path.name}")
+
+    # Start the camera on its own thread so it never waits on the ESP32
+    camera_thread = None
+    if args.camera != "none":
+        source = camera.FakeWebcam() if args.camera == "fake" else camera.Webcam(args.camera_index)
+        camera_thread = camera.CameraPublisher(source)
+        camera_thread.start()
+        log_event(f"Camera started: {args.camera}")
 
     device = FakeESP32()
-    print("Using fake ESP32.")
+    log_event("Using fake ESP32")
     print(f"In Foxglove: Open connection > Foxglove WebSocket > ws://localhost:{config.WS_PORT}")
     print("Press Ctrl+C to stop.")
 
     try:
         while True:
-            if listener.resend_status.is_set():
-                listener.resend_status.clear()
-                log_event(last_status)
+            if listener.resend_events.is_set():
+                listener.resend_events.clear()
+                resend_recent_events()
             raw = device.readline()
             if raw:
                 handle_line(raw)
     except KeyboardInterrupt:
         print("\nStopping")
     finally:
+        # Stop the camera before closing the recording, so no frames
+        # get logged after the file is closed
+        if camera_thread is not None:
+            camera_thread.stop()
         device.close()
         if recording is not None:
             # Writes the MCAP index. Skipping this can leave a broken file.

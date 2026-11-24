@@ -36,3 +36,12 @@ CHANNELS = 13
 # Seconds a bar survives without a fresh scan before Foxglove removes it.
 # Should be a few times longer than one scan.
 BAR_LIFETIME_SEC = 6
+
+# --- Camera ---
+CAMERA_TOPIC = "/camera/webcam"
+CAMERA_WIDTH = 640
+CAMERA_HEIGHT = 480
+# Frames per second actually published to Foxglove (the camera itself runs faster)
+CAMERA_PUBLISH_FPS = 5
+# JPEG quality from 1 (tiny, blocky) to 95 (big, sharp). 70 is a good balance.
+CAMERA_JPEG_QUALITY = 70
