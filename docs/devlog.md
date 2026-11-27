@@ -198,6 +198,43 @@ screen was showing, all on the same timeline.
 
 ---
 
+## Step 8: Signal Hunter panel
+
+Built my own Foxglove panel, Signal Hunter, as an extension in TypeScript
+and React. For now it reads `/wifi/scan` and shows every network as a
+row, strongest first, with a strength bar. My own network is in bold.
+Next step, each row gets a Track button.
+
+![Signal Hunter panel](images/step8-signal-hunter.png)
+
+**How a panel gets data.** The panel subscribes to a topic, Foxglove
+calls its `onRender()` function whenever new messages arrive, the panel
+saves the newest scan in React state, and React redraws. Then the panel
+calls `done()` to tell Foxglove it's ready for more. If you forget
+`done()`, the panel freezes after the first update.
+
+**Types as a contract.** The panel declares exactly what a scan message
+looks like (`id`, `label`, `rssi`, `ch`, `open`, `mine`). That's the
+contract between the Python bridge and the TypeScript panel. If I rename
+a field in the bridge and update the type here, TypeScript points at
+every line that needs to change. Python alone would never warn me.
+
+**Consistent colors.** The panel uses the same strength math and the
+same red, yellow, green colors as the 3D radar and the ESP32 screen
+twin, so all three agree on what "strong" looks like.
+
+![Signal Hunter next to the radar](images/step8-panel-with-radar.png)
+
+Because the panel just subscribes to a topic like Foxglove's built-in
+panels do, it works on recordings too. Opening an old MCAP file replays
+the list along with everything else.
+
+**Small gotcha:** Foxglove only loads extensions when it starts, so
+after every `npm run local-install` I have to fully quit (Cmd+Q) and
+reopen it.
+
+---
+
 ## Design note: adding a camera
 
 ![Logitech C920 webcam](images/webcam-c920.jpg)
@@ -237,9 +274,10 @@ Better plan: a **digital twin**. Everything the screen shows (mode, network coun
 | 4 | 3D radar | done |
 | 5 | Recording + replay (MCAP) | done |
 | 6 | Camera: fake webcam, then the real C920 | done |
-| 7 | ESP32 screen twin | next |
-| 8 | Signal Hunter panel | |
-| 9 | Two-way commands | |
+| 7 | ESP32 screen twin | done |
+| 8 | Signal Hunter panel | done |
+| 9 | Two-way commands | next |
 | 10 | Firmware on the real ESP32 | |
 | 11 | Swap in real hardware | |
-| 12 | README, demo, write-up | |
+| 12 | Auto-tagged moments | |
+| 13 | README, demo, write-up, registry PR | |
