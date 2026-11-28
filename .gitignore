@@ -32,3 +32,12 @@ dist/
 
 # Sample images from `python screen.py`
 bridge/screen_*.png
+
+# --- ESP-IDF firmware (firmware/) ---
+# Build output, recreated with `idf.py build`
+firmware/wifidar/build/
+# Generated from sdkconfig.defaults, which is the source of truth
+firmware/wifidar/sdkconfig
+firmware/wifidar/sdkconfig.old
+# Downloaded libraries, recreated from idf_component.yml
+firmware/wifidar/managed_components/

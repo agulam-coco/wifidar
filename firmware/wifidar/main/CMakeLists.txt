@@ -1,0 +1,17 @@
+# The "main" component: our own code.
+# The project uses MINIMAL_BUILD, so every IDF component we use is listed here.
+idf_component_register(
+    SRCS
+        "main.c"
+        "usb_link.c"
+        "protocol.c"
+        "scanner.c"
+    INCLUDE_DIRS "."
+    PRIV_REQUIRES
+        esp_wifi                       # Wi-Fi driver and scanning
+        esp_netif                      # networking layer the Wi-Fi driver needs
+        esp_event                      # event loop the Wi-Fi driver reports through
+        nvs_flash                      # storage the Wi-Fi driver keeps calibration in
+        esp_timer                      # uptime in microseconds
+        esp_driver_usb_serial_jtag     # talking to the laptop over USB
+)

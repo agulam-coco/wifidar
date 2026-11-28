@@ -1,0 +1,4 @@
+## IDF Component Manager manifest: extra libraries this firmware downloads.
+dependencies:
+  idf:
+    version: ">=6.0"

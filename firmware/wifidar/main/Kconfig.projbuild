@@ -1,0 +1,11 @@
+menu "wifidar"
+
+    config WIFIDAR_MAX_NETWORKS
+        int "Most networks reported per scan"
+        range 1 64
+        default 30
+        help
+            How many access points to keep from each scan. Busy buildings can
+            have dozens. Each one adds about 100 bytes to the scan message.
+
+endmenu

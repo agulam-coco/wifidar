@@ -1,0 +1,6 @@
+# Default settings for the wifidar firmware.
+# Only used when sdkconfig doesn't exist yet (first build, or after deleting it).
+
+# Only show warnings and errors from IDF itself, so its log lines
+# rarely mix in with our JSON messages on the same USB port
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
