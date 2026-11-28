@@ -16,11 +16,13 @@ Topics received (published by the Signal Hunter panel):
     /esp32/cmd      JSON            {"action": "track", "id": ...} or {"action": "stop"}
 
 Usage:
-    python bridge.py --fake                      record to recordings/<timestamp>.mcap
-    python bridge.py --fake --no-record          live only
-    python bridge.py --fake --record walk.mcap   record to a specific file
-    python bridge.py --fake --camera fake        add the fake webcam
-    python bridge.py --fake --camera webcam      add a real webcam
+    python bridge.py                             real ESP32, port found automatically
+    python bridge.py --port /dev/cu.usbmodem101  real ESP32 on a specific port
+    python bridge.py --fake                      simulated ESP32
+    python bridge.py --no-record                 live only
+    python bridge.py --record walk.mcap          record to a specific file
+    python bridge.py --camera fake               add the fake webcam
+    python bridge.py --camera webcam             add a real webcam
 """
 
 import argparse
@@ -33,6 +35,7 @@ from datetime import datetime
 from pathlib import Path
 
 import foxglove
+import serial
 from foxglove.messages import CompressedImage, Log, LogLevel, Timestamp
 from foxglove.websocket import Capability, ServerListener
 
@@ -40,6 +43,7 @@ import camera
 import config
 import scene
 import screen
+from esp32_serial import SerialESP32, find_esp32_port, list_port_names
 from fake_esp32 import FakeESP32
 
 # Recordings go in <repo>/recordings, no matter where the bridge is run from.
@@ -259,11 +263,40 @@ def handle_line(raw: bytes) -> None:
         log_event(f"Unknown message type: {kind}", LogLevel.Warning)
 
 
+# ---------- Device ----------
+
+def open_device(args: argparse.Namespace) -> FakeESP32 | SerialESP32:
+    """Open the fake or real ESP32, with clear errors if the real one isn't there."""
+    if args.fake:
+        log_event("Using fake ESP32")
+        return FakeESP32()
+
+    port = args.port or find_esp32_port()
+    if port is None:
+        ports = ", ".join(list_port_names()) or "none"
+        raise SystemExit(
+            f"No ESP32 found (ports on this computer: {ports}). "
+            "Plug it in, pass --port, or use --fake."
+        )
+
+    try:
+        device = SerialESP32(port)
+    except serial.SerialException as error:
+        raise SystemExit(
+            f"Couldn't open {port}: {error}\n"
+            "If idf.py monitor is running, close it first (Ctrl+])."
+        )
+
+    log_event(f"Connected to ESP32 on {port}")
+    return device
+
+
 # ---------- Main ----------
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="wifidar bridge")
     parser.add_argument("--fake", action="store_true", help="use a simulated ESP32")
+    parser.add_argument("--port", help="serial port of the real ESP32 (found automatically if omitted)")
     parser.add_argument("--record", type=Path,
                         help="MCAP file to write (default: timestamped file in recordings/)")
     parser.add_argument("--no-record", action="store_true",
@@ -273,10 +306,6 @@ def main() -> None:
     parser.add_argument("--camera-index", type=int, default=0,
                         help="which webcam to open (0 is usually the built-in one)")
     args = parser.parse_args()
-
-    if not args.fake:
-        # Real hardware support comes in Step 11
-        raise SystemExit("Only --fake is supported so far.")
 
     # Start the WebSocket server the Foxglove app connects to
     listener = BridgeListener()
@@ -303,8 +332,7 @@ def main() -> None:
         camera_thread.start()
         log_event(f"Camera started: {args.camera}")
 
-    device = FakeESP32()
-    log_event("Using fake ESP32")
+    device = open_device(args)
     print(f"In Foxglove: Open connection > Foxglove WebSocket > ws://localhost:{config.WS_PORT}")
     print("Press Ctrl+C to stop.")
 
@@ -319,6 +347,10 @@ def main() -> None:
                 handle_line(raw)
     except KeyboardInterrupt:
         print("\nStopping")
+    except serial.SerialException as error:
+        # The ESP32 was unplugged or reset mid-run. Stop cleanly so the recording still saves.
+        log_event(f"Lost connection to the ESP32: {error}", LogLevel.Error)
+    
     finally:
         # Stop the camera before closing the recording, so no frames
         # get logged after the file is closed

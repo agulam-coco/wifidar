@@ -4,6 +4,8 @@ Every tunable number lives here, so behavior can be changed without
 touching the logic in the other files.
 """
 
+import os
+
 # --- Serial connection to the ESP32 ---
 # Must match Serial.begin() in the firmware
 SERIAL_BAUD = 115200
@@ -13,10 +15,14 @@ SERIAL_BAUD = 115200
 WS_PORT = 8765
 
 # --- Privacy ---
-# Networks shown by their real name. Every other network is shown as a
-# hashed ID like "net-3fa2c1", so recordings never expose other people's info.
-# Put your own network name(s) here.
-MY_NETWORKS = {"YourWifiName"}
+# Comma-separated, set in your shell so your network name never ends up in git:
+#     export WIFIDAR_MY_NETWORKS="Home Wifi,Jason's iPhone"
+# Falls back to the fake ESP32's network name when it isn't set.
+MY_NETWORKS = {
+    name.strip()
+    for name in os.environ.get("WIFIDAR_MY_NETWORKS", "YourWifiName").split(",")
+    if name.strip()
+}
 
 # --- 3D radar ---
 # RSSI range mapped to 0..1 strength. Stronger than STRONG or weaker
@@ -52,3 +58,7 @@ SCREEN_TOPIC = "/esp32/screen"
 # --- Commands from Foxglove ---
 # Topic the Signal Hunter panel publishes commands on
 COMMAND_TOPIC = "/esp32/cmd"
+
+# --- SERIAL BAUD ---
+# USB vendor ID for Espressif chips. Used to find the ESP32's port automatically.
+ESPRESSIF_USB_VID = 0x303A
