@@ -11,6 +11,9 @@ Topics published:
     /camera/webcam  CompressedImage camera frames, real or fake
     /esp32/screen   CompressedImage what the ESP32's screen is showing (digital twin)
     /log            Log             human-readable events for Foxglove's Log panel
+    
+Topics received (published by the Signal Hunter panel):
+    /esp32/cmd      JSON            {"action": "track", "id": ...} or {"action": "stop"}
 
 Usage:
     python bridge.py --fake                      record to recordings/<timestamp>.mcap
@@ -23,6 +26,7 @@ Usage:
 import argparse
 import hashlib
 import json
+import queue
 import threading
 from collections import deque
 from datetime import datetime
@@ -30,7 +34,7 @@ from pathlib import Path
 
 import foxglove
 from foxglove.messages import CompressedImage, Log, LogLevel, Timestamp
-from foxglove.websocket import ServerListener
+from foxglove.websocket import Capability, ServerListener
 
 import camera
 import config
@@ -45,9 +49,13 @@ RECORDINGS_DIR = Path(__file__).resolve().parent.parent / "recordings"
 # Draws the ESP32 screen twin. Created once and reused, since it loads fonts.
 screen_twin = screen.ScreenTwin()
 
-# Private ID -> display label, from the latest scans. Tracking messages only
-# carry a BSSID, so this is how the finder screen knows what name to show.
-network_labels: dict[str, str] = {}
+# Private ID -> real details, from the latest scans. Only the bridge knows
+# real BSSIDs. Foxglove only ever sees the private ID, so when the panel says
+# "track net-3fa2c1", this is how the bridge finds the real BSSID and channel.
+known_networks: dict[str, dict] = {}
+
+# Commands from Foxglove, waiting for the main loop to send them to the ESP32
+commands: "queue.Queue[dict]" = queue.Queue()
 
 
 # ---------- Privacy helpers ----------
@@ -115,12 +123,32 @@ class BridgeListener(ServerListener):
     def __init__(self) -> None:
         super().__init__()
         self.resend_events = threading.Event()
+        # Client channel ID -> topic name, for topics a Foxglove app advertised
+        self.client_topics: dict[int, str] = {}
 
     def on_subscribe(self, client, channel) -> None:
         # Live viewers only get messages sent after they subscribe,
         # so when someone starts watching /log, replay recent events.
         if channel.topic == "/log":
             self.resend_events.set()
+    
+    def on_client_advertise(self, client, channel) -> None:
+        # A panel announced it will publish on a topic. Remember the
+        # channel's ID so we know which topic later messages belong to.
+        self.client_topics[channel.id] = channel.topic
+
+    def on_client_unadvertise(self, client, client_channel_id: int) -> None:
+        self.client_topics.pop(client_channel_id, None)
+
+    def on_message_data(self, client, client_channel_id: int, data: bytes) -> None:
+        # A panel published a message. Only accept commands, and don't touch
+        # the serial port here: queue it for the main loop instead.
+        if self.client_topics.get(client_channel_id) != config.COMMAND_TOPIC:
+            return
+        try:
+            commands.put(json.loads(data))
+        except ValueError:
+            pass  # not valid JSON, ignore it
 
 # ---------- Screen twin ----------
 
@@ -141,7 +169,7 @@ def handle_scan(message: dict) -> None:
     for net in message["networks"]:
         net_id = private_id(net["bssid"])
         label = display_label(net["ssid"], net_id)
-        network_labels[net_id] = label
+        known_networks[net_id] = {"bssid": net["bssid"], "ch": net["ch"], "label": label}
         networks.append({
             "id": net_id,
             "label": label,
@@ -169,8 +197,8 @@ def handle_scan(message: dict) -> None:
 def handle_track(message: dict) -> None:
     """Publish a tracking update on /wifi/tracked, with the BSSID anonymized."""
     net_id = private_id(message["bssid"])
-    label = network_labels.get(net_id, net_id)  # fall back to the ID if never scanned
-
+    label = known_networks.get(net_id, {}).get("label", net_id)  # fall back to the ID
+    
     foxglove.log("/wifi/tracked", {
         "id": net_id,
         "label": label,
@@ -188,7 +216,30 @@ def handle_track(message: dict) -> None:
         found=message["found"],
     ))
 
+def send_queued_commands(device) -> None:
+    """Send any commands from Foxglove down to the ESP32."""
+    while not commands.empty():
+        command = commands.get()
+        action = command.get("action")
 
+        if action == "track":
+            net_id = command.get("id", "")
+            net = known_networks.get(net_id)
+            if net is None:
+                log_event(f"Can't track {net_id}: not in a recent scan", LogLevel.Warning)
+                continue
+            device.write(f'TRACK {net["bssid"]} {net["ch"]} {net["label"]}\n'.encode())
+            foxglove.log("/esp32/cmd_log", {"action": "track", "id": net_id, "label": net["label"]})
+            log_event(f'Tracking {net["label"]} on channel {net["ch"]}')
+
+        elif action == "stop":
+            device.write(b"STOP\n")
+            foxglove.log("/esp32/cmd_log", {"action": "stop"})
+            log_event("Back to scan mode")
+
+        else:
+            log_event(f"Unknown command: {command}", LogLevel.Warning)
+            
 def handle_line(raw: bytes) -> None:
     """Parse one line from the ESP32 and route it by message type."""
     try:
@@ -229,8 +280,13 @@ def main() -> None:
 
     # Start the WebSocket server the Foxglove app connects to
     listener = BridgeListener()
-    server = foxglove.start_server(name="wifidar", port=config.WS_PORT, server_listener=listener)
-
+    server = foxglove.start_server(
+        name="wifidar",
+        port=config.WS_PORT,
+        capabilities=[Capability.ClientPublish],  # let Foxglove send messages back
+        supported_encodings=["json"],             # ...encoded as JSON
+        server_listener=listener,
+    )
     # Open the recording. From here on, every foxglove.log() call is also saved to the file.
     recording = None
     if not args.no_record:
@@ -257,6 +313,7 @@ def main() -> None:
             if listener.resend_events.is_set():
                 listener.resend_events.clear()
                 resend_recent_events()
+            send_queued_commands(device)
             raw = device.readline()
             if raw:
                 handle_line(raw)

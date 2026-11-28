@@ -48,3 +48,7 @@ CAMERA_JPEG_QUALITY = 70
 
 # --- ESP32 screen twin ---
 SCREEN_TOPIC = "/esp32/screen"
+
+# --- Commands from Foxglove ---
+# Topic the Signal Hunter panel publishes commands on
+COMMAND_TOPIC = "/esp32/cmd"
