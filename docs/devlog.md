@@ -294,6 +294,58 @@ dots, so I have to watch for it when reading plots.
 
 ---
 
+## Step 10A: Real firmware, real scans
+
+Moved from the fake to the real ESP32. I went with ESP-IDF (Espressif's
+own framework) instead of Arduino. It's what Watch My Tokens used, so I
+already knew it works on this board (ESP32-2424S012C: ESP32-C3 with a
+round GC9A01 screen), and it gives real control over FreeRTOS tasks and
+the Wi-Fi driver.
+
+Started from IDF's Wi-Fi scan example and split it into modules with
+one job each, same as the bridge:
+
+| File | Job |
+|---|---|
+| `usb_link.c` | the only file that touches the USB driver |
+| `scanner.c` | starts Wi-Fi and runs scans |
+| `protocol.c` | builds the JSON messages |
+| `main.c` | ties it together |
+
+The output matches the fake ESP32's format exactly, so the bridge
+shouldn't be able to tell the difference:
+
+![Real scan messages from the ESP32, names hidden](images/step10a-scan-json.png)
+
+**One message, one write.** IDF's own log lines go out the same USB
+port. If a scan message went out in pieces, a log line could land in
+the middle and break the JSON. So each message gets built completely
+in a buffer first and sent in a single write.
+
+**Not overflowing the buffer.** In C, writing past the end of an array
+silently corrupts memory. Every write into the message buffer checks
+how much space is left. If a crowded building has so many networks
+that the message would overflow, the firmware undoes the last network
+and leaves the rest out, so the JSON always stays valid.
+
+**Escaping names.** Network names come from strangers' routers and can
+contain anything, including quotes that would break JSON. The firmware
+escapes quotes and backslashes, and writes anything unusual as
+`\u00XX` codes.
+
+**MINIMAL_BUILD.** The IDF template trims the build to only the
+components `main` lists. So every component I use (Wi-Fi, NVS, the
+USB driver, the timer) has to be listed in `CMakeLists.txt`.
+
+**Settings in menuconfig.** The max number of networks per scan is a
+Kconfig setting, so it shows up in `idf.py menuconfig` under a
+"wifidar" menu instead of being hardcoded.
+
+First real data: every network around my desk was on channel 6, so
+they'll all land in the same slice of the radar.
+
+---
+
 ## Design note: adding a camera
 
 ![Logitech C920 webcam](images/webcam-c920.jpg)
@@ -336,7 +388,7 @@ Better plan: a **digital twin**. Everything the screen shows (mode, network coun
 | 7 | ESP32 screen twin | done |
 | 8 | Signal Hunter panel | done |
 | 9 | Two-way commands | done |
-| 10 | Firmware on the real ESP32 | next |
+| 10 | Firmware on the real ESP32 | in progress (10A done) |
 | 11 | Swap in real hardware | |
 | 12 | Auto-tagged moments | |
 | 13 | README, demo, write-up, registry PR | |
