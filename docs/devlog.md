@@ -235,6 +235,65 @@ reopen it.
 
 ---
 
+## Step 9: Two-way commands
+
+This is the part that makes wifidar more than a dashboard. Data flows
+*into* Foxglove, and now commands flow back *out* to the hardware.
+
+Every network in Signal Hunter has a Track button. Clicking it sends a
+command from Foxglove, through the bridge, down to the ESP32, which
+switches into finder mode for that network. The screen twin switches to
+the finder ring, and the panel turns into a live readout.
+
+![Tracking card with live plot](images/step9-tracking-card.png)
+
+**The path of one click:**
+
+1. Signal Hunter publishes `{"action": "track", "id": "net-067b9c"}`
+   on `/esp32/cmd`
+2. It goes over the WebSocket to the bridge
+3. The SDK hands it to my listener on its own thread, which drops it
+   in a queue
+4. The main loop picks it up, looks up the real BSSID and channel, and
+   writes `TRACK <bssid> <channel> <label>` to the ESP32
+
+**Advertise, then publish.** Before a panel can send anything, it has
+to advertise the topic. The bridge gets a numeric channel ID for it,
+and every message after that only carries the ID. So the bridge keeps
+a small table from channel ID to topic, and ignores anything that isn't
+a command, so a stray message can't move the hardware.
+
+**Privacy still holds.** The panel only ever knows private IDs like
+`net-067b9c`. The real BSSID never leaves the bridge. It translates the
+ID at the very last moment, right before writing to the serial port.
+
+**Commands as a type.** In TypeScript, a command is either
+`{action: "track", id}` or `{action: "stop"}`. That's a union type, so
+the compiler won't let me send a track command without an ID or
+misspell "stop."
+
+**Replays can't send commands.** When I open a recording, Foxglove
+doesn't give the panel an `advertise` function at all, since there's
+nothing live to talk to. The panel checks for that, grays out the Track
+buttons, and says "replay, tracking off." Every command also gets
+logged to `/esp32/cmd_log`, so a replay shows exactly when I clicked.
+
+**Raw vs. smoothed.** Plotting `/wifi/tracked.raw_rssi` next to
+`/wifi/tracked.rssi` shows what the smoothing does. Raw Wi-Fi readings
+jump a few dBm every reading. The smoothed line follows the trend
+without the noise, just a little behind.
+
+![Raw vs smoothed signal](images/step9-raw-vs-smoothed.png)
+
+**Plot gotcha.** When there's a gap with no tracking data (like when I
+stopped and started tracking again), the Plot panel draws a straight
+line across it. That line isn't real data, it's just connecting the
+dots, so I have to watch for it when reading plots.
+
+![Gap in tracking data](images/step9-tracking-gap.png)
+
+---
+
 ## Design note: adding a camera
 
 ![Logitech C920 webcam](images/webcam-c920.jpg)
@@ -276,8 +335,8 @@ Better plan: a **digital twin**. Everything the screen shows (mode, network coun
 | 6 | Camera: fake webcam, then the real C920 | done |
 | 7 | ESP32 screen twin | done |
 | 8 | Signal Hunter panel | done |
-| 9 | Two-way commands | next |
-| 10 | Firmware on the real ESP32 | |
+| 9 | Two-way commands | done |
+| 10 | Firmware on the real ESP32 | next |
 | 11 | Swap in real hardware | |
 | 12 | Auto-tagged moments | |
 | 13 | README, demo, write-up, registry PR | |
