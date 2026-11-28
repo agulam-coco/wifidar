@@ -346,6 +346,72 @@ they'll all land in the same slice of the radar.
 
 ---
 
+## Step 10B: Commands and finder mode
+
+The firmware now listens for `TRACK` and `STOP` from the laptop, the
+other half of the Track button from Step 9.
+
+It's the same design as the bridge, just in C:
+
+| Bridge (Python) | Firmware (C) |
+|---|---|
+| SDK thread receives commands | a FreeRTOS task reads bytes from USB |
+| `queue.Queue` between threads | a FreeRTOS queue between tasks |
+| main loop picks up commands | `app_main`'s loop picks up commands |
+
+The main loop spends seconds inside blocking scans, so it can't also
+be listening. A separate task is always reading, and it hands finished
+commands to the main loop through a queue.
+
+**Parsing untrusted input.** Anything coming over a wire can be
+garbled. The parser checks every hex digit, colon, and channel number,
+and rejects anything malformed instead of trusting it. I wrote the
+BSSID parser by hand instead of using `sscanf`, since what `sscanf`
+supports depends on which C library IDF builds with.
+
+**Finder mode is fast.** A full scan of all 13 channels takes a couple
+of seconds. In finder mode, the firmware already knows the BSSID and
+channel, so it tells the Wi-Fi driver to only listen on that channel
+and only report that one access point. That turns one update every 2
+seconds into several per second.
+
+Smoothing works the same as in the fake: `0.7 * old + 0.3 * new`. Using
+`float` instead of `double` matters here, since the C3 has no hardware
+for `double` math.
+
+## Step 10C: The round screen
+
+The real screen now shows the same two screens as the twin: radar rings
+with the network count, and the finder ring. I reused the display setup
+from Watch My Tokens (GC9A01 over SPI, drawn with LVGL 9), since I
+already knew those pins and settings work on this board.
+
+![Real screen next to the screen twin](images/step10c-screen-vs-twin.jpg)
+
+**The LVGL lock.** LVGL redraws the screen on its own FreeRTOS task. If
+my code changed a label while LVGL was halfway through drawing it, I'd
+get glitches. So every change is wrapped in `lvgl_port_lock()` and
+`lvgl_port_unlock()`. Same idea as the queue: two tasks, one shared
+thing, so they take turns.
+
+**Build once, then show or hide.** Both screens get built at startup as
+two containers, and switching modes just hides one and shows the other.
+Creating and deleting objects over and over wastes memory on a chip
+this small.
+
+**Angles lined up for free.** LVGL measures angles from 3 o'clock going
+clockwise, same as Pillow in the screen twin. So the twin's arc maps
+straight across: rotate to 120 degrees, sweep 300, and the gap lands at
+the bottom on both.
+
+The screen and the laptop get the same data at the same moment: right
+after each scan, the message goes out over USB and the display updates.
+That's why the bridge can redraw the screen without the ESP32 ever
+sending pixels.
+
+---
+
+
 ## Design note: adding a camera
 
 ![Logitech C920 webcam](images/webcam-c920.jpg)
@@ -388,7 +454,7 @@ Better plan: a **digital twin**. Everything the screen shows (mode, network coun
 | 7 | ESP32 screen twin | done |
 | 8 | Signal Hunter panel | done |
 | 9 | Two-way commands | done |
-| 10 | Firmware on the real ESP32 | in progress (10A done) |
-| 11 | Swap in real hardware | |
+| 10 | Firmware on the real ESP32 | done |
+| 11 | Swap in real hardware | next |
 | 12 | Auto-tagged moments | |
 | 13 | README, demo, write-up, registry PR | |
