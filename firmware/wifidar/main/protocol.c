@@ -139,3 +139,16 @@ void protocol_send_scan(const wifi_ap_record_t *records, uint16_t count)
     line_appendf("]}");
     line_send();
 }
+
+void protocol_send_track(const uint8_t bssid[6], const finder_reading_t *reading)
+{
+    line_reset();
+    line_appendf("{\"type\":\"track\",\"bssid\":\"" MACSTR "\","
+                 "\"rssi\":%d,\"raw_rssi\":%d,\"percent\":%d,\"found\":%s}",
+                 MAC2STR(bssid),
+                 reading->rssi,
+                 reading->raw_rssi,
+                 reading->percent,
+                 reading->found ? "true" : "false");
+    line_send();
+}

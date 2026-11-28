@@ -6,6 +6,8 @@ idf_component_register(
         "usb_link.c"
         "protocol.c"
         "scanner.c"
+        "commands.c"
+        "finder.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES
         esp_wifi                       # Wi-Fi driver and scanning

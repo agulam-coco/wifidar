@@ -39,3 +39,10 @@ void usb_link_write(const char *data, size_t len)
         ESP_LOGW(TAG, "only sent %d of %u bytes", written, (unsigned)len);
     }
 }
+
+bool usb_link_read_byte(uint8_t *out)
+{
+    // portMAX_DELAY = wait forever. Only the command task calls this,
+    // so blocking here doesn't hold up anything else.
+    return usb_serial_jtag_read_bytes(out, 1, portMAX_DELAY) == 1;
+}
