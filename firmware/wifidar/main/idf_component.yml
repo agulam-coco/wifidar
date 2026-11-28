@@ -2,3 +2,7 @@
 dependencies:
   idf:
     version: ">=6.0"
+  # LVGL 9 plus Espressif's glue (runs LVGL on its own task, handles the lock)
+  espressif/esp_lvgl_port: "^2.9.0"
+  # Driver for the round GC9A01 display
+  espressif/esp_lcd_gc9a01: "^2.0.4"

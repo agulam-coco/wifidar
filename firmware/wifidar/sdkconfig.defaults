@@ -4,3 +4,13 @@
 # Only show warnings and errors from IDF itself, so its log lines
 # rarely mix in with our JSON messages on the same USB port
 CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+
+# LVGL fonts used on screen. Only Montserrat 14 is on by default.
+# 16 = small text, 28 = dBm readout, 48 = network count (same sizes as the screen twin)
+CONFIG_LV_FONT_MONTSERRAT_16=y
+CONFIG_LV_FONT_MONTSERRAT_28=y
+CONFIG_LV_FONT_MONTSERRAT_48=y
+
+# LVGL plus the big fonts can outgrow the default 1 MB app partition.
+# This uses the "single large app" layout instead (about 1.5 MB).
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
